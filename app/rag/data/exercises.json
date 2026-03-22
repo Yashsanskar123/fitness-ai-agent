@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Bench Press",
+    "muscle_group": "chest",
+    "equipment": "barbell",
+    "difficulty": "intermediate",
+    "description": "Compound chest exercise for strength and mass"
+  },
+  {
+    "name": "Push Ups",
+    "muscle_group": "chest",
+    "equipment": "bodyweight",
+    "difficulty": "beginner",
+    "description": "Basic bodyweight chest exercise"
+  },
+  {
+    "name": "Squats",
+    "muscle_group": "legs",
+    "equipment": "barbell",
+    "difficulty": "intermediate",
+    "description": "Compound leg movement for overall strength"
+  },
+  {
+    "name": "Pull Ups",
+    "muscle_group": "back",
+    "equipment": "bodyweight",
+    "difficulty": "intermediate",
+    "description": "Upper body pulling exercise"
+  },
+  {
+    "name": "Shoulder Press",
+    "muscle_group": "shoulders",
+    "equipment": "dumbbell",
+    "difficulty": "intermediate",
+    "description": "Overhead pressing movement"
+  }
+]
