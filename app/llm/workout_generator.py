@@ -39,6 +39,14 @@ You are a professional fitness coach.
 User Profile:
 {context['user_profile']}
 
+User Injuries:
+{context.get('injuries', [])}
+
+IMPORTANT:
+- Avoid exercises that can worsen injuries
+- Suggest safe alternatives
+- Do not include risky movements
+
 Recent Workouts:
 {context['recent_workouts']}
 
@@ -143,3 +151,27 @@ Format:
                 ex["name"] = ex["name"].replace("BBench", "Bench").replace("BBarbell", "Barbell")
 
         return json_output
+    
+    def generate(self, prompt: str):
+        """
+        🔥 Generic LLM call for decision making (used by AdaptiveEngine)
+        """
+
+        try:
+            response = self.client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": "You are a fitness coach AI."},
+                    {"role": "user", "content": prompt}
+                ],
+            )
+
+            output = response.choices[0].message.content.strip()
+
+            print("🤖 LLM RAW RESPONSE:", output)  # DEBUG
+
+            return output
+
+        except Exception as e:
+            print("❌ LLM GENERATE ERROR:", str(e))
+            return "maintain"  # safe fallback

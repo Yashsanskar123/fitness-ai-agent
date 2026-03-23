@@ -1,5 +1,8 @@
 class InsightEngine:
 
+    def __init__(self,llm=None):
+        self.llm = llm
+
     def generate_insights(self, context):
         insights = []
 
@@ -28,3 +31,52 @@ class InsightEngine:
             insights.append("Not enough progress data to analyze trends.")
 
         return insights
+    
+    def generate_reasoning(self, consistency_data, action):
+
+        # 🔁 Fallback (no LLM)
+        if not self.llm:
+            return self._rule_based_reasoning(consistency_data, action)
+
+        prompt = f"""
+You are a professional fitness coach.
+
+User stats:
+- Consistency Score: {consistency_data['consistency_score']}
+- Workout Streak: {consistency_data['streak_days']}
+- Missed Days: {consistency_data['missed_recent']}
+- Fatigue Level: {consistency_data['fatigue_level']}
+
+Decision taken: {action}
+
+Explain in 1-2 lines WHY this decision was made.
+
+Tone:
+- Friendly
+- Motivational
+- Human-like
+
+Do NOT mention AI.
+"""
+
+        try:
+            response = self.llm.generate(prompt)
+            return response.strip()
+
+        except Exception as e:
+            print("⚠️ Insight LLM error:", str(e))
+            return self._rule_based_reasoning(consistency_data, action)
+
+    # ---------------- RULE FALLBACK ---------------- #
+    def _rule_based_reasoning(self, data, action):
+
+        if action == "deload":
+            return "Your fatigue is high and recovery is important, so we're taking it light today."
+
+        if action == "reduce_intensity":
+            return "You've missed a few workouts, so we're easing back into your routine."
+
+        if action == "increase_intensity":
+            return "You've been consistent — it's time to push harder."
+
+        return "You're doing well — let's maintain your current pace."

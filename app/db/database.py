@@ -64,6 +64,34 @@ class Database:
         )
         """)
 
+        # Learning LOGS
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS learning_logs(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        date TEXT,
+        decision TEXT,
+        consistency_data TEXT,
+        progression_data TEXT,
+        outcome TEXT,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP                                                      
+        )                    
+        """)
+
+        # User Injuries
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_injuries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            injury_type TEXT,
+            severity TEXT,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP      
+                                              
+        )
+    """)
+
         self.conn.commit()
 
     def close(self):
