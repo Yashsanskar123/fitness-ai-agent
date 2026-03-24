@@ -4,7 +4,9 @@ from app.agent.insight_engine import InsightEngine
 from app.agent.progression_engine import ProgressionEngine
 from app.agent.self_learning_engine import SelfLearningEngine
 from app.agent.goal_phase_engine import GoalPhaseEngine
-
+from app.agent.performance_engine import PerformanceEngine
+from app.agent.recovery_engine import RecoveryEngine
+from app.agent.missed_workout_engine import MissedWorkoutEngine
 
 class AdaptiveEngine:
 
@@ -16,6 +18,9 @@ class AdaptiveEngine:
         self.progression_engine = ProgressionEngine(memory_manager) if memory_manager else None
         self.learning_engine = SelfLearningEngine(memory_manager, llm) if memory_manager else None
         self.goal_phase_engine = GoalPhaseEngine(memory_manager, llm) if memory_manager else None
+        self.performance_engine = PerformanceEngine(memory_manager, llm) if memory_manager else None
+        self.recovery_engine = RecoveryEngine(memory_manager, llm) if memory_manager else None
+        self.missed_workout_engine = MissedWorkoutEngine(memory_manager, llm) if memory_manager else None
 
         if memory_manager:
             self.consistency_engine = ConsistencyEngine(memory_manager)
@@ -77,9 +82,14 @@ class AdaptiveEngine:
 
     # ---------------- LLM DECISION ENGINE ---------------- #
 
-    def _llm_decide(self, consistency, progression, learning, goal_phase, user_input):
+    def _llm_decide(self, consistency, progression, performance, learning, goal_phase, user_input):
 
         goal_phase = goal_phase or {"phase": "foundation", "reason": "no data"}
+        performance = performance or {
+            "performance_status": "unknown",
+            "fatigue_level": "medium",
+            "recommendation": "maintain"
+        }
 
         prompt = f"""
 You are an intelligent fitness coach AI.
@@ -99,6 +109,11 @@ User progress:
 - Intensity Trend: {progression['intensity_trend']}
 - Progress Status: {progression['progress_status']}
 
+User performance:
+- Status: {performance.get("performance_status")}
+- Fatigue: {performance.get("fatigue_level")}
+- Recommendation: {performance.get("recommendation")}
+
 User training phase:
 - Phase: {goal_phase.get("phase")}
 - Reason: {goal_phase.get("reason")}
@@ -107,22 +122,28 @@ Past learning:
 - Summary: {learning.get('summary')}
 - Preferred Bias: {learning.get('bias')}
 
-Decide the best training action:
+Goal:
+Choose the MOST appropriate training action for TODAY.
 
+Actions:
 increase_intensity
 reduce_intensity
 maintain
 deload
 
-Rules:
+Guidelines:
 - High fatigue → deload
 - Low consistency → reduce_intensity
 - Plateau → increase_intensity
 - Good progress → maintain or increase
+- If performance declining → reduce_intensity or deload
 - If user feels strong but fatigue exists → prefer maintain over deload
+- Respect training phase (foundation → lighter, strength → heavier)
 - Learning bias should influence but NOT dominate
+- Prioritize safety and sustainability over aggression
 
-Return ONLY ONE WORD.
+Return ONLY ONE WORD from the actions above.
+Do NOT explain.
 """
 
         try:
@@ -158,9 +179,12 @@ Return ONLY ONE WORD.
         consistency = None
         progression = None
         learning = None
+        performance = None
         action = "maintain"
         reasoning = ""
         goal_phase = None
+        recovery = None
+        missed_workout = None
 
         # ---------------------------
         # 🧠 Multi-signal analysis
@@ -169,6 +193,9 @@ Return ONLY ONE WORD.
             try:
                 consistency = self.consistency_engine.analyze(user_id=user_id)
 
+                # ---------------------------
+                # 📈 Progression
+                # ---------------------------
                 if self.progression_engine:
                     progression = self.progression_engine.analyze(user_id=user_id)
                 else:
@@ -181,8 +208,43 @@ Return ONLY ONE WORD.
 
                 print("📈 Progression Data:", progression)
 
+                if self.missed_workout_engine:
+                    missed_workout = self.missed_workout_engine.analyze(
+                        user_id = user_id,
+                        context = context,
+                        consistency = consistency
+                    )
+
+                    print("Missed Workout Decision:", missed_workout)
+
                 # ---------------------------
-                # 🎯 Goal Phase (FIXED)
+                # 📊 Performance
+                # ---------------------------
+                if self.performance_engine:
+                    performance = self.performance_engine.analyze(user_id=user_id)
+                    print("📊 Performance Data:", performance)
+                else:
+                    performance = {
+                        "performance_status": "unknown",
+                        "fatigue_level": "medium",
+                        "recommendation": "maintain"
+                    }
+
+                # ---------------------------
+                # 💀 Recovery Engine (NEW)
+                # ---------------------------
+                if self.recovery_engine:
+                    recovery = self.recovery_engine.analyze(
+                        user_id=user_id,
+                        context=context,
+                        consistency=consistency,
+                        performance=performance,
+                        user_input=user_input
+                    )
+                    print("💀 Recovery Decision:", recovery)
+
+                # ---------------------------
+                # 🎯 Goal Phase
                 # ---------------------------
                 if self.goal_phase_engine:
                     goal_phase = self.goal_phase_engine.analyze(
@@ -194,7 +256,7 @@ Return ONLY ONE WORD.
                     print("🎯 Goal Phase:", goal_phase)
 
                 # ---------------------------
-                # 🧠 Learning layer
+                # 🧠 Learning
                 # ---------------------------
                 if self.learning_engine:
                     learning = self.learning_engine.analyze(user_id=user_id)
@@ -204,16 +266,58 @@ Return ONLY ONE WORD.
                 print("🧠 Learning Data:", learning)
 
                 # ---------------------------
-                # 🤖 Final decision
+                # 🤖 LLM Decision
                 # ---------------------------
                 if self.llm:
-                    action = self._llm_decide(consistency, progression, learning, goal_phase, user_input)
+                    action = self._llm_decide(
+                        consistency,
+                        progression,
+                        performance,
+                        learning,
+                        goal_phase,
+                        user_input
+                    )
                 else:
                     action = consistency["recommended_action"]
 
-                print("🧠 Final Action:", action)
+                print("🧠 Initial Action:", action)
 
-                reasoning = self.insight_engine.generate_reasoning(consistency, action)
+                # ---------------------------
+                # 📊 Performance Override
+                # ---------------------------
+                if performance:
+                    if performance.get("recommendation") == "deload":
+                        action = "deload"
+                    elif performance.get("recommendation") == "reduce_intensity":
+                        action = "reduce_intensity"
+
+                # ---------------------------
+                # 💀 RECOVERY OVERRIDE (CRITICAL FIX)
+                # ---------------------------
+                if recovery and recovery.get("recovery_needed"):
+
+                    rec_type = recovery.get("recovery_type", "light")
+
+                    if rec_type == "rest":
+                        action = "deload"
+                        reasoning = "Your body needs full recovery. Taking rest today."
+
+                    elif rec_type == "light":
+                        action = "reduce_intensity"
+                        reasoning = "You are fatigued. Let's go light today."
+
+                    elif rec_type == "deload":
+                        action = "deload"
+                        reasoning = "Deload recommended to prevent burnout."
+
+                    print("💀 Recovery Override Applied:", action)
+
+                # ---------------------------
+                # 💬 Final Reasoning
+                # ---------------------------
+                if not reasoning:
+                    reasoning = self.insight_engine.generate_reasoning(consistency, action)
+
                 print("💬 AI Reasoning:", reasoning)
 
             except Exception as e:
@@ -233,6 +337,20 @@ Return ONLY ONE WORD.
                 focus = args.get("focus", "full body")
                 intensity = args.get("intensity", "medium")
 
+                if missed_workout and missed_workout.get("adjust_plan"):
+                    strategy = missed_workout.get("strategy")
+                    new_focus = missed_workout.get("new_focus")
+
+                    if strategy == "shift" and new_focus:
+                        focus = new_focus
+                    elif strategy == "restart":
+                        focus = "full body"
+                        intensity = "low"
+                    elif strategy == "skip":
+                        pass
+
+                    print("Missed Workout Applied:", strategy, focus)
+
                 # Avoid repetition
                 if "chest" in last_workout and focus == "chest":
                     focus = "back"
@@ -241,7 +359,7 @@ Return ONLY ONE WORD.
                 elif "legs" in last_workout and focus == "legs":
                     focus = "upper body"
 
-                # Recovery override
+                # Recovery from user input
                 if "sore" in user_input or "pain" in user_input:
                     intensity = "low"
                     focus = "full body"
@@ -251,9 +369,7 @@ Return ONLY ONE WORD.
                     intensity = "low"
                     focus = "full body"
 
-                # ---------------------------
-                # 🧠 AI decision override
-                # ---------------------------
+                # AI decision override
                 if action == "increase_intensity":
                     intensity = "high"
                 elif action == "reduce_intensity":
@@ -262,22 +378,16 @@ Return ONLY ONE WORD.
                     intensity = "low"
                     focus = "full body"
 
-                # ---------------------------
-                # 🎯 PHASE-BASED ADJUSTMENT (NEW)
-                # ---------------------------
+                # Phase adjustment
                 if goal_phase:
                     phase = goal_phase.get("phase")
 
                     if phase == "foundation":
                         intensity = "low"
-
-                    elif phase == "hypertrophy":
-                        if intensity == "low":
-                            intensity = "medium"
-
+                    elif phase == "hypertrophy" and intensity == "low":
+                        intensity = "medium"
                     elif phase == "strength":
                         intensity = "high"
-
                     elif phase == "cut":
                         intensity = "medium"
 

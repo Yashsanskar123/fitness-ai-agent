@@ -8,7 +8,7 @@ class Executor:
         # 🔥 Map tool → method name
         self.tool_method_map = {
             "workout_generator": "generate_workout",
-            "diet_generator": "generate_diet",
+            "diet_generator": "generate_meal_plan",
             "progress_tracker": "get_progress",
             "recovery_advisor": "get_recovery_advice",
             "insight_generator": "generate_insights",
@@ -42,7 +42,53 @@ class Executor:
             print("⚠️ FormSafety Engine init failed:", str(e))
             self.form_safety_engine = None
 
+        # ---------------------------
+        # 💀 MultiDay Engine INIT
+        # ---------------------------
+        try:
+            from app.agent.multiday_engine import MultiDayEngine
+            from app.llm.workout_generator import WorkoutGenerator
+
+            self.multiday_engine = MultiDayEngine(
+                llm=WorkoutGenerator()
+            )
+        except Exception as e:
+            print("⚠️ MultiDay Engine init failed:", str(e))
+            self.multiday_engine = None
+
+        # ---------------------------
+        # 💀 Nutrition Engine INIT
+        # ---------------------------
+        try:
+            from app.agent.nutrition_engine import NutritionEngine
+            from app.llm.workout_generator import WorkoutGenerator
+
+            self.nutrition_engine = NutritionEngine(
+                llm=WorkoutGenerator()
+            )
+        except Exception as e:
+            print("⚠️ Nutrition Engine init failed:", str(e))
+            self.nutrition_engine = None
+
     def execute_plan(self, plan, user_id, user_input, context):
+
+        # ==================================================
+        # 💀 MULTI-DAY TRIGGER
+        # ==================================================
+        try:
+            if self.multiday_engine:
+                if "plan" in user_input.lower() or "week" in user_input.lower():
+                    print("📅 Generating multi-day plan...")
+
+                    multiday = self.multiday_engine.generate_plan(context, user_id)
+
+                    return [{
+                        "tool": "multiday_planner",
+                        "output": multiday
+                    }]
+        except Exception as e:
+            print("⚠️ MultiDay Trigger Error:", str(e))
+
         results = []
 
         for step in plan:
@@ -58,7 +104,6 @@ class Executor:
                 continue
 
             try:
-                # 🔥 Get method dynamically
                 method_name = self.tool_method_map.get(tool_name)
 
                 if not method_name or not hasattr(tool, method_name):
@@ -70,7 +115,7 @@ class Executor:
 
                 method = getattr(tool, method_name)
 
-                # 🧠 Inject default args (auto-fill)
+                # 🧠 Inject default args
                 if tool_name == "workout_generator":
                     args.setdefault("user_id", user_id)
                     args.setdefault("user_input", user_input)
@@ -84,21 +129,19 @@ class Executor:
                 elif tool_name == "recovery_advisor":
                     args = {"user_input": user_input}
 
-                # 🚀 FINAL CALL (dynamic)
+                # 🚀 Execute tool
                 result = method(**args)
                 print("RAW TOOL OUTPUT:", result)
 
                 # ==================================================
-                # 💀 POST-PROCESSING FOR WORKOUT (IMPORTANT ORDER)
+                # 💀 POST-PROCESSING FOR WORKOUT
                 # ==================================================
                 if tool_name == "workout_generator":
 
                     injuries = context.get("injuries", [])
                     print("🩹 Injuries in Executor:", injuries)
 
-                    # ---------------------------
-                    # 💀 APPLY SUBSTITUTION
-                    # ---------------------------
+                    # 💀 Substitution
                     try:
                         if self.substitution_engine and injuries:
                             print("🩹 Applying substitution...")
@@ -113,13 +156,10 @@ class Executor:
                     except Exception as e:
                         print("⚠️ Substitution Error:", str(e))
 
-                    # ---------------------------
-                    # 💀 APPLY FORM SAFETY
-                    # ---------------------------
+                    # 💀 Form Safety
                     try:
                         if self.form_safety_engine:
 
-                            # 🔥 get phase if available
                             phase = "foundation"
                             if context.get("goal_phase"):
                                 phase = context["goal_phase"].get("phase", "foundation")
@@ -136,6 +176,31 @@ class Executor:
 
                     except Exception as e:
                         print("⚠️ FormSafety Error:", str(e))
+
+                    # ==================================================
+                    # 💀 AUTO NUTRITION GENERATION (NEW)
+                    # ==================================================
+                    try:
+                        if self.nutrition_engine:
+                            print("💀 Generating diet alongside workout...")
+
+                            targets = self.nutrition_engine.analyze(
+                                context=context,
+                                user_id=user_id
+                            )
+
+                            diet = self.nutrition_engine.generate_meal_plan(
+                                nutrition_targets=targets,
+                                user_input=user_input
+                            )
+
+                            results.append({
+                                "tool": "diet_generator",
+                                "output": diet
+                            })
+
+                    except Exception as e:
+                        print("⚠️ Nutrition Error:", str(e))
 
                 # ---------------------------
                 # 💾 MEMORY WRITE
