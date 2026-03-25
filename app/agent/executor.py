@@ -3,9 +3,9 @@ from app.agent.form_safety_engine import FormSafetyEngine
 
 class Executor:
     def __init__(self, tools):
-        self.tools = tools  # tool registry
+        self.tools = tools
 
-        # 🔥 Map tool → method name
+        # 🔥 Tool → method mapping
         self.tool_method_map = {
             "workout_generator": "generate_workout",
             "diet_generator": "generate_meal_plan",
@@ -16,70 +16,71 @@ class Executor:
         }
 
         # ---------------------------
-        # 💀 Substitution Engine INIT
+        # 💀 Engine Initializations
         # ---------------------------
+
         try:
             from app.agent.substitution_engine import SubstitutionEngine
             from app.llm.workout_generator import WorkoutGenerator
-
-            self.substitution_engine = SubstitutionEngine(
-                llm=WorkoutGenerator()
-            )
+            self.substitution_engine = SubstitutionEngine(llm=WorkoutGenerator())
         except Exception as e:
-            print("⚠️ Substitution Engine init failed:", str(e))
+            print("⚠️ Substitution Engine init failed:", e)
             self.substitution_engine = None
 
-        # ---------------------------
-        # 💀 Form Safety Engine INIT
-        # ---------------------------
         try:
             from app.llm.workout_generator import WorkoutGenerator
-
-            self.form_safety_engine = FormSafetyEngine(
-                llm=WorkoutGenerator()
-            )
+            self.form_safety_engine = FormSafetyEngine(llm=WorkoutGenerator())
         except Exception as e:
-            print("⚠️ FormSafety Engine init failed:", str(e))
+            print("⚠️ FormSafety Engine init failed:", e)
             self.form_safety_engine = None
 
-        # ---------------------------
-        # 💀 MultiDay Engine INIT
-        # ---------------------------
         try:
             from app.agent.multiday_engine import MultiDayEngine
             from app.llm.workout_generator import WorkoutGenerator
-
-            self.multiday_engine = MultiDayEngine(
-                llm=WorkoutGenerator()
-            )
+            self.multiday_engine = MultiDayEngine(llm=WorkoutGenerator())
         except Exception as e:
-            print("⚠️ MultiDay Engine init failed:", str(e))
+            print("⚠️ MultiDay Engine init failed:", e)
             self.multiday_engine = None
 
-        # ---------------------------
-        # 💀 Nutrition Engine INIT
-        # ---------------------------
         try:
             from app.agent.nutrition_engine import NutritionEngine
             from app.llm.workout_generator import WorkoutGenerator
+            self.nutrition_engine = NutritionEngine(llm=WorkoutGenerator())
+        except Exception as e:
+            print("⚠️ Nutrition Engine init failed:", e)
+            self.nutrition_engine = None
 
-            self.nutrition_engine = NutritionEngine(
+        try:
+            from app.agent.progression_engine import ProgressionEngine
+            from app.memory.memory_manager import MemoryManager
+            self.progression_engine = ProgressionEngine(memory_manager=MemoryManager())
+        except Exception as e:
+            print("⚠️ Progression Engine init failed:", e)
+            self.progression_engine = None
+
+        try:
+            from app.agent.recovery_engine import RecoveryEngine
+            from app.memory.memory_manager import MemoryManager
+            from app.llm.workout_generator import WorkoutGenerator
+
+            self.recovery_engine = RecoveryEngine(
+                memory_manager=MemoryManager(),
                 llm=WorkoutGenerator()
             )
         except Exception as e:
-            print("⚠️ Nutrition Engine init failed:", str(e))
-            self.nutrition_engine = None
+            print("⚠️ Recovery Engine init failed:", e)
+            self.recovery_engine = None
 
+    # ==========================================================
+    # 🚀 MAIN EXECUTION
+    # ==========================================================
     def execute_plan(self, plan, user_id, user_input, context):
 
-        # ==================================================
         # 💀 MULTI-DAY TRIGGER
-        # ==================================================
         try:
             if self.multiday_engine:
                 if "plan" in user_input.lower() or "week" in user_input.lower():
                     print("📅 Generating multi-day plan...")
-
                     multiday = self.multiday_engine.generate_plan(context, user_id)
 
                     return [{
@@ -87,10 +88,13 @@ class Executor:
                         "output": multiday
                     }]
         except Exception as e:
-            print("⚠️ MultiDay Trigger Error:", str(e))
+            print("⚠️ MultiDay Trigger Error:", e)
 
         results = []
 
+        # ==========================================================
+        # 🔁 EXECUTION LOOP
+        # ==========================================================
         for step in plan:
             tool_name = step.get("tool")
             args = step.get("args", {}) or {}
@@ -109,13 +113,13 @@ class Executor:
                 if not method_name or not hasattr(tool, method_name):
                     results.append({
                         "tool": tool_name,
-                        "error": f"Method {method_name} not found in {tool_name}"
+                        "error": f"Method {method_name} not found"
                     })
                     continue
 
                 method = getattr(tool, method_name)
 
-                # 🧠 Inject default args
+                # 🧠 Inject defaults
                 if tool_name == "workout_generator":
                     args.setdefault("user_id", user_id)
                     args.setdefault("user_input", user_input)
@@ -129,60 +133,113 @@ class Executor:
                 elif tool_name == "recovery_advisor":
                     args = {"user_input": user_input}
 
-                # 🚀 Execute tool
+                # 🚀 Execute
                 result = method(**args)
                 print("RAW TOOL OUTPUT:", result)
 
                 # ==================================================
-                # 💀 POST-PROCESSING FOR WORKOUT
+                # 💀 WORKOUT POST PROCESSING
                 # ==================================================
                 if tool_name == "workout_generator":
 
                     injuries = context.get("injuries", [])
-                    print("🩹 Injuries in Executor:", injuries)
+                    print("🩹 Injuries:", injuries)
 
-                    # 💀 Substitution
+                    # ==================================================
+                    # 💀 RECOVERY ENGINE (FIRST 🔥)
+                    # ==================================================
+                    try:
+                        if self.recovery_engine:
+
+                            print("🧠 Applying recovery logic...")
+
+                            recovery = self.recovery_engine.analyze(
+                                user_id=user_id,
+                                context=context,
+                                consistency=context.get("consistency", {}),
+                                performance=context.get("performance", {}),
+                                user_input=user_input
+                            )
+
+                            r_type = recovery.get("recovery_type")
+
+                            if recovery.get("recovery_needed"):
+
+                                if r_type == "rest":
+                                    result["note"] = "Rest day recommended"
+                                    result["exercises"] = []
+
+                                elif r_type == "light":
+                                    for ex in result.get("exercises", []):
+                                        if "sets" in ex:
+                                            ex["sets"] = max(2, ex["sets"] - 1)
+
+                                    result["note"] = "Light workout (recovery mode)"
+
+                                elif r_type == "deload":
+                                    for ex in result.get("exercises", []):
+                                        if "sets" in ex:
+                                            ex["sets"] = max(2, ex["sets"] - 1)
+                                        ex["reps"] = "light"
+
+                                    result["note"] = "Deload week activated"
+
+                            print("✅ Recovery applied:", recovery)
+
+                    except Exception as e:
+                        print("⚠️ Recovery Error:", e)
+
+                    # 🔁 Substitution
                     try:
                         if self.substitution_engine and injuries:
                             print("🩹 Applying substitution...")
-
                             result = self.substitution_engine.apply_substitutions(
                                 workout_plan=result,
                                 injuries=injuries
                             )
-
-                            print("✅ Post-substitution workout:", result)
-
                     except Exception as e:
-                        print("⚠️ Substitution Error:", str(e))
+                        print("⚠️ Substitution Error:", e)
 
-                    # 💀 Form Safety
+                    # 🧠 Form Safety
                     try:
                         if self.form_safety_engine:
-
-                            phase = "foundation"
-                            if context.get("goal_phase"):
-                                phase = context["goal_phase"].get("phase", "foundation")
+                            phase = context.get("goal_phase", {}).get("phase", "foundation")
 
                             print("💀 Applying form safety...")
-
                             result = self.form_safety_engine.apply_form_safety(
                                 workout_plan=result,
                                 injuries=injuries,
                                 phase=phase
                             )
+                    except Exception as e:
+                        print("⚠️ FormSafety Error:", e)
 
-                            print("✅ Form safety added")
+                    # 📈 Progression (CONDITIONAL 🔥)
+                    try:
+                        if self.progression_engine and result.get("exercises"):
+
+                            if result.get("note") in ["Rest day recommended", "Deload week activated"]:
+                                print("⛔ Skipping progression due to recovery")
+
+                            else:
+                                print("📈 Applying progression...")
+
+                                progress_data = self.progression_engine.analyze(user_id)
+
+                                result = self.progression_engine.apply_progression(
+                                    workout_plan=result,
+                                    progress_data=progress_data
+                                )
+
+                                print("✅ Progress:", progress_data["progress_status"])
 
                     except Exception as e:
-                        print("⚠️ FormSafety Error:", str(e))
+                        print("⚠️ Progression Error:", e)
 
-                    # ==================================================
-                    # 💀 AUTO NUTRITION GENERATION (NEW)
-                    # ==================================================
+                    # 🥗 Nutrition
                     try:
                         if self.nutrition_engine:
-                            print("💀 Generating diet alongside workout...")
+                            print("💀 Generating diet...")
 
                             targets = self.nutrition_engine.analyze(
                                 context=context,
@@ -200,20 +257,19 @@ class Executor:
                             })
 
                     except Exception as e:
-                        print("⚠️ Nutrition Error:", str(e))
+                        print("⚠️ Nutrition Error:", e)
 
-                # ---------------------------
-                # 💾 MEMORY WRITE
-                # ---------------------------
+                # 💾 Save memory
                 self.write_to_memory(tool_name, result, user_id)
 
+                # ✅ Append main result
                 results.append({
                     "tool": tool_name,
                     "output": result
                 })
 
             except Exception as e:
-                print("❌ EXECUTION ERROR:", str(e))
+                print("❌ EXECUTION ERROR:", e)
                 results.append({
                     "tool": tool_name,
                     "error": str(e)
@@ -221,6 +277,9 @@ class Executor:
 
         return results
 
+    # ==========================================================
+    # 💾 MEMORY
+    # ==========================================================
     def write_to_memory(self, tool_name, output, user_id):
         try:
             from app.memory.memory_manager import MemoryManager
@@ -243,4 +302,4 @@ class Executor:
                 )
 
         except Exception as e:
-            print("Memory Write Error:", str(e))
+            print("⚠️ Memory Write Error:", e)

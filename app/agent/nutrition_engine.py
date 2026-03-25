@@ -73,10 +73,45 @@ class NutritionEngine:
         else:
             return round(weight * 1.5, 1)
         
+    def _clean_llm_json(self, response: str):
+        import json
+        import re
+
+        try:
+            # remove markdown
+            response = re.sub(r"```json|```", "", response)
+
+            # remove comments
+            response = re.sub(r"//.*", "", response)
+
+            # remove units (30g → 30)
+            response = re.sub(r'(\d+)\s*g', r'\1', response)
+
+            # remove trailing commas
+            response = re.sub(r",\s*}", "}", response)
+            response = re.sub(r",\s*]", "]", response)
+
+            # extract JSON
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+
+            if not match:
+                raise ValueError("No JSON found")
+
+            json_str = match.group(0)
+
+            data = json.loads(json_str)
+
+            return data
+
+        except Exception as e:
+            print("💀 JSON CLEAN FAILED:", str(e))
+            return {}        
+
+        
     def generate_meal_plan(self, nutrition_targets, user_input=""):
 
         if not self.llm:
-            return {"meals": []}
+            return {"error": "LLM not available", "meals": []}
 
         calories = nutrition_targets.get("calories")
         protein = nutrition_targets.get("protein")
@@ -101,8 +136,14 @@ class NutritionEngine:
     - Practical foods (home or gym friendly)
     - Divide into 4–6 meals
 
-    Return ONLY JSON:
-
+    STRICT RULES:
+    - ONLY return valid JSON
+    - NO markdown (no ```json)
+    - NO explanation
+    - NO text outside JSON
+    - Numbers must be integers (NO 30g, only 30)
+    
+    Format:
     {{
     "meals": [
         {{
@@ -117,22 +158,19 @@ class NutritionEngine:
 
         try:
             response = self.llm.generate(prompt)
+            cleaned = self._clean_llm_json(response)
 
-            import json
-            import re
-
-            response = response.strip()
-            response = re.sub(r"```json|```", "", response)
-            response = re.sub(r"//.*", "", response)
-
-            match = re.search(r"\{.*\}", response, re.DOTALL)
-
-            if match:
-                data = json.loads(match.group(0))
-                print("💀 Meal Plan:", data)
-                return data
-
+            if not cleaned.get("meals"):
+                raise ValueError("empty meals after parsing")
+            print("Cleaned meal plan", cleaned)
+            return cleaned
         except Exception as e:
-            print("⚠️ Meal LLM error:", str(e))
+            print("Meal LLM Error:", str(e))
 
-        return {"meals": []}
+            return {
+                "error":"Meal generation failed",
+                "raw_output": response if 'response' in locals() else "",
+                "meals": []
+            }
+
+            

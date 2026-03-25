@@ -6,103 +6,112 @@ class RecoveryEngine:
 
     def analyze(self, user_id=1, context=None, consistency=None, performance=None, user_input=""):
         """
-        Decide whether recovery is needed
+        Decide whether recovery is needed (LLM-first, rule fallback)
         """
 
         context = context or {}
         consistency = consistency or {}
         performance = performance or {}
+        user_input = (user_input or "").lower()
 
         # ---------------------------
-        # 🧠 Rule-based signals
+        # 📊 Memory signals (SAFE)
+        # ---------------------------
+        recent_workouts = []
+        if self.memory:
+            try:
+                recent_workouts = self.memory.get_recent_workouts(user_id)
+            except Exception as e:
+                print("⚠️ Recovery memory error:", str(e))
+
+        # ---------------------------
+        # 🤖 LLM decision (PRIMARY)
+        # ---------------------------
+        if self.llm:
+            try:
+                return self._llm_decide(
+                    consistency=consistency,
+                    performance=performance,
+                    context=context,
+                    user_input=user_input,
+                    recent_workouts=recent_workouts
+                )
+            except Exception as e:
+                print("⚠️ LLM failed, fallback to rules:", str(e))
+
+        # ---------------------------
+        # 🔁 RULE-BASED FALLBACK
         # ---------------------------
         fatigue_flag = False
 
         streak = consistency.get("streak_days", 0)
         fatigue_level = consistency.get("fatigue_level", "low")
-        missed = consistency.get("missed_recent", 0)
-
         perf_fatigue = performance.get("fatigue_level", "low")
-        perf_status = performance.get("performance_status", "unknown")
 
-        user_input = user_input.lower()
-
-        # 💀 Basic signals
         if streak >= 5:
             fatigue_flag = True
 
         if fatigue_level == "high" or perf_fatigue == "high":
             fatigue_flag = True
 
-        if "tired" in user_input or "sore" in user_input or "low energy" in user_input:
+        if any(word in user_input for word in ["tired", "sore", "low energy", "exhausted"]):
             fatigue_flag = True
 
-        # ---------------------------
-        # 🤖 LLM decision (if available)
-        # ---------------------------
-        if self.llm:
-            return self._llm_decide(
-                consistency,
-                performance,
-                context,
-                user_input
-            )
-
-        # ---------------------------
-        # 🔁 Fallback logic
-        # ---------------------------
         if fatigue_flag:
             return {
                 "recovery_needed": True,
                 "recovery_type": "light",
-                "reason": "User showing fatigue signals"
+                "reason": "Detected fatigue via fallback logic"
             }
 
         return {
             "recovery_needed": False,
             "recovery_type": "none",
-            "reason": "User is in good condition"
+            "reason": "User in good condition (fallback)"
         }
 
     # ---------------------------
-    # 🤖 LLM DECISION
+    # 🤖 LLM DECISION CORE
     # ---------------------------
-    def _llm_decide(self, consistency, performance, context, user_input):
+    def _llm_decide(self, consistency, performance, context, user_input, recent_workouts):
 
         prompt = f"""
-You are an expert fitness recovery coach.
+You are an elite fitness recovery coach.
 
-User data:
+Analyze whether the user needs recovery.
+
+User Data:
 
 Consistency:
-- Streak: {consistency.get("streak_days")}
-- Missed Days: {consistency.get("missed_recent")}
-- Fatigue: {consistency.get("fatigue_level")}
+- Streak: {consistency.get("streak_days", 0)}
+- Missed Days: {consistency.get("missed_recent", 0)}
+- Fatigue: {consistency.get("fatigue_level", "low")}
 
 Performance:
-- Status: {performance.get("performance_status")}
-- Fatigue: {performance.get("fatigue_level")}
+- Status: {performance.get("performance_status", "unknown")}
+- Fatigue: {performance.get("fatigue_level", "low")}
 
-Recent workouts:
-{context.get("recent_workouts", [])}
+Recent Workouts:
+{recent_workouts}
 
-User input:
+User Input:
 "{user_input}"
 
-Decide:
-- Does the user need recovery?
-- What type?
+Think carefully:
+- Look for overtraining
+- Fatigue accumulation
+- Recovery need
 
 Recovery types:
-rest
-light
-deload
+- rest (full rest)
+- light (reduced intensity)
+- deload (systematic reduction)
 
 Return ONLY JSON:
 
 {{
   "recovery_needed": true/false,
-  "recovery_type": "rest/light/deload",
+  "recovery_type": "rest/light/deload/none",
   "reason": "short explanation"
 }}
 """
@@ -113,6 +122,9 @@ Return ONLY JSON:
             import json
             import re
 
+            # ---------------------------
+            # 🧼 Clean response
+            # ---------------------------
             response = response.strip()
             response = re.sub(r"```json|```", "", response)
             response = re.sub(r"//.*", "", response)
@@ -121,15 +133,24 @@ Return ONLY JSON:
 
             if match:
                 data = json.loads(match.group(0))
-                print("💀 Recovery Decision:", data)
-                return data
+
+                # ---------------------------
+                # 🛡️ Safety defaults
+                # ---------------------------
+                return {
+                    "recovery_needed": bool(data.get("recovery_needed", False)),
+                    "recovery_type": data.get("recovery_type", "none"),
+                    "reason": data.get("reason", "LLM decision")
+                }
 
         except Exception as e:
             print("⚠️ Recovery LLM error:", str(e))
 
-        # fallback if LLM fails
+        # ---------------------------
+        # 🔁 FINAL FALLBACK
+        # ---------------------------
         return {
             "recovery_needed": False,
             "recovery_type": "none",
-            "reason": "fallback decision"
+            "reason": "LLM fallback triggered"
         }
