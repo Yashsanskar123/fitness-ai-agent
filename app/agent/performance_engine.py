@@ -38,14 +38,16 @@ class PerformanceEngine:
         return self._rule_based(workouts, progress)
 
     # ---------------------------
-    # 🤖 LLM ANALYSIS
+    # 🤖 LLM ANALYSIS (FIXED)
     # ---------------------------
     def _llm_analyze(self, workouts, progress, learning):
 
         prompt = f"""
-You are an expert fitness performance analyst.
+You are a strict JSON-only fitness performance analyzer.
 
-User data:
+Analyze the data and return ONLY a JSON object.
+
+User Data:
 
 Workouts:
 {workouts}
@@ -53,25 +55,35 @@ Workouts:
 Progress:
 {progress}
 
-Past Decisions & Outcomes:
+Past Decisions:
 {learning}
 
-Analyze performance and return JSON:
+Output format (STRICT):
 
 {{
-  "completion_rate": "...",
-  "performance_status": "improving / stable / declining / inconsistent",
-  "fatigue_level": "low / medium / high",
-  "recommendation": "increase_intensity / reduce_intensity / maintain / deload"
+  "completion_rate": 0.5,
+  "performance_status": "stable",
+  "fatigue_level": "medium",
+  "recommendation": "maintain"
 }}
 
-Rules:
-- If workouts are frequent → good completion
-- If skipped often → low completion
-- If progress improving → improving
-- If fatigue high → deload
-- If inconsistent → reduce_intensity
-- Keep values simple and realistic
+STRICT RULES:
+- Return ONLY JSON (no explanation, no text)
+- NO markdown (no ```json)
+- NO code
+- NO comments
+- completion_rate MUST be a number (0–1)
+- performance_status MUST be one of:
+  improving, stable, declining, inconsistent
+- fatigue_level MUST be one of:
+  low, medium, high
+- recommendation MUST be one of:
+  increase_intensity, reduce_intensity, maintain, deload
+
+If unsure → return reasonable defaults.
+
+DO NOT EXPLAIN.
+ONLY RETURN JSON.
 """
 
         try:
@@ -80,11 +92,21 @@ Rules:
             import json
             import re
 
+            # ---------------------------
+            # 🧹 CLEAN RESPONSE
+            # ---------------------------
             response = response.strip()
+
+            # remove markdown
             response = re.sub(r"```json|```", "", response)
+
+            # remove comments
             response = re.sub(r"//.*", "", response)
 
-            match = re.search(r"\{.*\}", response, re.DOTALL)
+            # ---------------------------
+            # 🔍 EXTRACT JSON (FIRST MATCH ONLY)
+            # ---------------------------
+            match = re.search(r"\{.*?\}", response, re.DOTALL)
 
             if match:
                 json_str = match.group(0)
@@ -92,25 +114,31 @@ Rules:
                 try:
                     data = json.loads(json_str)
 
-                    # 🔥 SAFE NORMALIZATION
-                    data["performance_status"] = data.get("performance_status", "unknown").lower()
-                    data["fatigue_level"] = data.get("fatigue_level", "medium").lower()
-                    data["recommendation"] = data.get("recommendation", "maintain").lower()
+                    # ---------------------------
+                    # 🔥 STRICT NORMALIZATION
+                    # ---------------------------
+                    normalized = {
+                        "completion_rate": float(data.get("completion_rate", 0.5)),
+                        "performance_status": str(data.get("performance_status", "stable")).lower(),
+                        "fatigue_level": str(data.get("fatigue_level", "medium")).lower(),
+                        "recommendation": str(data.get("recommendation", "maintain")).lower()
+                    }
 
-                    print("📊 Performance Data:", data)
+                    print("📊 Performance Data:", normalized)
 
-                    return data
+                    return normalized
 
-                except:
-                    print("⚠️ Performance JSON parse failed:", json_str)
+                except Exception as e:
+                    print("⚠️ JSON parse failed:", json_str)
 
         except Exception as e:
             print("⚠️ Performance LLM error:", str(e))
 
+        print("⚠️ Falling back to rule-based performance")
         return self._rule_based(workouts, progress)
 
     # ---------------------------
-    # 🔁 FALLBACK
+    # 🔁 RULE-BASED FALLBACK
     # ---------------------------
     def _rule_based(self, workouts, progress):
 
@@ -122,15 +150,18 @@ Rules:
             status = "inconsistent"
 
         return {
-            "completion_rate": "unknown",
+            "completion_rate": 0.5,
             "performance_status": status,
             "fatigue_level": "medium",
             "recommendation": "maintain"
         }
 
+    # ---------------------------
+    # 🚨 HARD FALLBACK
+    # ---------------------------
     def _fallback(self):
         return {
-            "completion_rate": "unknown",
+            "completion_rate": 0.5,
             "performance_status": "unknown",
             "fatigue_level": "medium",
             "recommendation": "maintain"

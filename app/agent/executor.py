@@ -8,7 +8,7 @@ class Executor:
         # 🔥 Tool → method mapping
         self.tool_method_map = {
             "workout_generator": "generate_workout",
-            "diet_generator": "generate_meal_plan",
+            "diet_generator": "generate_diet",
             "progress_tracker": "get_progress",
             "recovery_advisor": "get_recovery_advice",
             "insight_generator": "generate_insights",
@@ -76,25 +76,36 @@ class Executor:
     # ==========================================================
     def execute_plan(self, plan, user_id, user_input, context):
 
-        # 💀 MULTI-DAY TRIGGER
         try:
             if self.multiday_engine:
-                if "plan" in user_input.lower() or "week" in user_input.lower():
+                user_input_lower = user_input.lower()
+
+                multi_day_keywords = [
+                    "weekly plan",
+                    "week plan",
+                    "full week",
+                    "full plan",
+                    "7 day",
+                    "7-day",
+                    "weekly workout",
+                    "weekly schedule"
+                ]
+
+                if any(k in user_input_lower for k in multi_day_keywords):
                     print("📅 Generating multi-day plan...")
+
                     multiday = self.multiday_engine.generate_plan(context, user_id)
 
                     return [{
                         "tool": "multiday_planner",
                         "output": multiday
                     }]
+
         except Exception as e:
             print("⚠️ MultiDay Trigger Error:", e)
 
         results = []
 
-        # ==========================================================
-        # 🔁 EXECUTION LOOP
-        # ==========================================================
         for step in plan:
             tool_name = step.get("tool")
             args = step.get("args", {}) or {}
@@ -104,37 +115,82 @@ class Executor:
             tool = self.tools.get(tool_name)
 
             if not tool:
-                results.append({"error": f"{tool_name} not found"})
+                results.append({"tool": tool_name, "error": "Tool not found"})
                 continue
 
             try:
                 method_name = self.tool_method_map.get(tool_name)
 
-                if not method_name or not hasattr(tool, method_name):
-                    results.append({
-                        "tool": tool_name,
-                        "error": f"Method {method_name} not found"
-                    })
-                    continue
+                # ==================================================
+                # 🔥 SAFE EXECUTION FIX
+                # ==================================================
 
-                method = getattr(tool, method_name)
+                if method_name and hasattr(tool, method_name):
+                    method = getattr(tool, method_name)
+                else:
+                    if callable(tool):
+                        try:
+                            result = tool(
+                                user_input=user_input,
+                                context=context,
+                                user_id=user_id
+                            )
+                        except TypeError:
+                            try:
+                                result = tool(user_input)
+                            except:
+                                try:
+                                    result = tool()
+                                except:
+                                    result = {"message": "Tool execution failed"}
 
-                # 🧠 Inject defaults
+                        results.append({
+                            "tool": tool_name,
+                            "output": result
+                        })
+                        continue
+                    else:
+                        results.append({
+                            "tool": tool_name,
+                            "error": f"{tool_name} not executable"
+                        })
+                        continue
+
+                # ==================================================
+                # 🧠 ARG SANITIZATION
+                # ==================================================
                 if tool_name == "workout_generator":
-                    args.setdefault("user_id", user_id)
-                    args.setdefault("user_input", user_input)
+                    args = {
+                        "user_id": user_id,
+                        "user_input": user_input,
+                        "focus": args.get("focus", "general"),
+                        "intensity": args.get("intensity", "medium")
+                    }
 
                 elif tool_name == "diet_generator":
-                    args.setdefault("user_id", user_id)
+                    args = {"user_id": user_id}
 
-                elif tool_name in ["insight_generator", "nudge_generator", "progress_tracker"]:
-                    args.setdefault("context", context)
+                elif tool_name in ["insight_generator", "nudge_generator"]:
+                    args = {"context": context}
 
                 elif tool_name == "recovery_advisor":
                     args = {"user_input": user_input}
 
-                # 🚀 Execute
-                result = method(**args)
+                elif tool_name == "progress_tracker":
+                    args = {"user_id": user_id}
+
+                # ==================================================
+                # 🚀 EXECUTE TOOL (FIXED)
+                # ==================================================
+                try:
+                    result = method(**args)
+                except Exception as e:
+                    print("⚠️ Tool execution failed:", e)
+                    result = {"error": str(e)}
+
+                if result is None:
+                    result = {"message": "No output generated"}
+
                 print("RAW TOOL OUTPUT:", result)
 
                 # ==================================================
@@ -143,16 +199,9 @@ class Executor:
                 if tool_name == "workout_generator":
 
                     injuries = context.get("injuries", [])
-                    print("🩹 Injuries:", injuries)
 
-                    # ==================================================
-                    # 💀 RECOVERY ENGINE (FIRST 🔥)
-                    # ==================================================
                     try:
                         if self.recovery_engine:
-
-                            print("🧠 Applying recovery logic...")
-
                             recovery = self.recovery_engine.analyze(
                                 user_id=user_id,
                                 context=context,
@@ -161,9 +210,8 @@ class Executor:
                                 user_input=user_input
                             )
 
-                            r_type = recovery.get("recovery_type")
-
                             if recovery.get("recovery_needed"):
+                                r_type = recovery.get("recovery_type")
 
                                 if r_type == "rest":
                                     result["note"] = "Rest day recommended"
@@ -171,28 +219,22 @@ class Executor:
 
                                 elif r_type == "light":
                                     for ex in result.get("exercises", []):
-                                        if "sets" in ex:
-                                            ex["sets"] = max(2, ex["sets"] - 1)
+                                        ex["sets"] = max(2, ex["sets"] - 1)
 
-                                    result["note"] = "Light workout (recovery mode)"
+                                    result["note"] = "Light workout"
 
                                 elif r_type == "deload":
                                     for ex in result.get("exercises", []):
-                                        if "sets" in ex:
-                                            ex["sets"] = max(2, ex["sets"] - 1)
+                                        ex["sets"] = max(2, ex["sets"] - 1)
                                         ex["reps"] = "light"
 
                                     result["note"] = "Deload week activated"
 
-                            print("✅ Recovery applied:", recovery)
-
                     except Exception as e:
                         print("⚠️ Recovery Error:", e)
 
-                    # 🔁 Substitution
                     try:
                         if self.substitution_engine and injuries:
-                            print("🩹 Applying substitution...")
                             result = self.substitution_engine.apply_substitutions(
                                 workout_plan=result,
                                 injuries=injuries
@@ -200,12 +242,10 @@ class Executor:
                     except Exception as e:
                         print("⚠️ Substitution Error:", e)
 
-                    # 🧠 Form Safety
                     try:
                         if self.form_safety_engine:
                             phase = context.get("goal_phase", {}).get("phase", "foundation")
 
-                            print("💀 Applying form safety...")
                             result = self.form_safety_engine.apply_form_safety(
                                 workout_plan=result,
                                 injuries=injuries,
@@ -214,33 +254,20 @@ class Executor:
                     except Exception as e:
                         print("⚠️ FormSafety Error:", e)
 
-                    # 📈 Progression (CONDITIONAL 🔥)
                     try:
                         if self.progression_engine and result.get("exercises"):
-
-                            if result.get("note") in ["Rest day recommended", "Deload week activated"]:
-                                print("⛔ Skipping progression due to recovery")
-
-                            else:
-                                print("📈 Applying progression...")
-
+                            if result.get("note") not in ["Rest day recommended", "Deload week activated"]:
                                 progress_data = self.progression_engine.analyze(user_id)
 
                                 result = self.progression_engine.apply_progression(
                                     workout_plan=result,
                                     progress_data=progress_data
                                 )
-
-                                print("✅ Progress:", progress_data["progress_status"])
-
                     except Exception as e:
                         print("⚠️ Progression Error:", e)
 
-                    # 🥗 Nutrition
                     try:
                         if self.nutrition_engine:
-                            print("💀 Generating diet...")
-
                             targets = self.nutrition_engine.analyze(
                                 context=context,
                                 user_id=user_id
@@ -251,6 +278,9 @@ class Executor:
                                 user_input=user_input
                             )
 
+                            if not diet or not isinstance(diet, dict):
+                                diet = {"meals": []}
+
                             results.append({
                                 "tool": "diet_generator",
                                 "output": diet
@@ -259,10 +289,8 @@ class Executor:
                     except Exception as e:
                         print("⚠️ Nutrition Error:", e)
 
-                # 💾 Save memory
                 self.write_to_memory(tool_name, result, user_id)
 
-                # ✅ Append main result
                 results.append({
                     "tool": tool_name,
                     "output": result
@@ -277,9 +305,6 @@ class Executor:
 
         return results
 
-    # ==========================================================
-    # 💾 MEMORY
-    # ==========================================================
     def write_to_memory(self, tool_name, output, user_id):
         try:
             from app.memory.memory_manager import MemoryManager

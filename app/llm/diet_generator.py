@@ -16,15 +16,15 @@ class DietGenerator:
 
     def generate_diet(self, user_id=1):
 
-        # 🧠 Step 1: Get memory
-        context = self.memory.build_user_context(user_id)
-        user = context["user_profile"]
+        # 🧠 Step 1: Get memory safely
+        context = self.memory.build_user_context(user_id) or {}
+        user = context.get("user_profile", {}) or {}
 
-        weight = user["weight"]
-        goal = user["goal"]
-        diet_type = user["diet_type"]
+        weight = user.get("weight", 65)
+        goal = user.get("goal", "general_fitness")
+        diet_type = user.get("diet_type", "vegetarian")
 
-        # 🧮 Step 2: Basic protein logic
+        # 🧮 Step 2: Protein logic
         protein_target = round(weight * 1.8)
 
         # 🧾 Step 3: Prompt
@@ -80,41 +80,55 @@ Format:
 
         output = response.choices[0].message.content
 
-                # 🧹 Step 5: Clean JSON (ROBUST)
+        # =====================================================
+        # 🧹 STEP 5: ROBUST JSON PARSING (FIXED PROPERLY)
+        # =====================================================
+
         json_output = None
 
         try:
+            # 🔥 Direct parse
             json_output = json.loads(output)
 
         except:
-            output = output.strip()
-            output = re.sub(r"```json|```", "", output)
+            try:
+                # 🔥 Clean response
+                cleaned = output.strip()
+                cleaned = re.sub(r"```json|```", "", cleaned)
+                cleaned = re.sub(r",\s*}", "}", cleaned)
+                cleaned = re.sub(r",\s*]", "]", cleaned)
 
-            match = re.search(r"\{.*\}", output, re.DOTALL)
+                # 🔥 Extract full JSON block
+                start = cleaned.find("{")
+                end = cleaned.rfind("}") + 1
 
-            if match:
-                json_str = match.group()
-
-                json_str = re.sub(r",\s*}", "}", json_str)
-                json_str = re.sub(r",\s*]", "]", json_str)
-
-                try:
+                if start != -1 and end != -1:
+                    json_str = cleaned[start:end]
                     json_output = json.loads(json_str)
-                except:
-                    pass
 
-        # 🚨 FINAL SAFETY
-        if not json_output:
+            except Exception as e:
+                print("❌ JSON PARSE FAILED:", e)
+                json_output = None
+
+        # =====================================================
+        # 🚨 FINAL SAFETY (FIXED CONDITION)
+        # =====================================================
+
+        if not json_output or not isinstance(json_output, dict):
             print("RAW DIET OUTPUT:", output)
 
             return {
                 "total_calories": 2200,
                 "protein_target": protein_target,
                 "meals": [],
-                "note": "Could Not fully generate diet, try again"
+                "note": "Diet generation fallback used"
             }
 
-        # 🔥 HARD PROTEIN CAP
+        # 🔥 Ensure meals key exists
+        if "meals" not in json_output or not isinstance(json_output["meals"], list):
+            json_output["meals"] = []
+
+        # 🔥 Protein cap safety
         if json_output.get("protein_target", 0) > 200:
             json_output["protein_target"] = protein_target
 

@@ -45,23 +45,68 @@ class Planner:
         if not isinstance(plan, list):
             return []
 
+        seen_tools = set()
         valid_steps = []
 
         for step in plan:
             tool = step.get("tool")
-            args = step.get("args", {})
+            args = step.get("args", {}) or {}
 
-            if tool in self.VALID_TOOLS:
-                valid_steps.append({
-                    "tool": tool,
-                    "args": args if isinstance(args, dict) else {}
-                })
+            # ❌ skip invalid tools
+            if tool not in self.VALID_TOOLS:
+                continue
+
+            # ❌ remove duplicates
+            if tool in seen_tools:
+                continue
+
+            # 🔧 ensure args always dict
+            if not isinstance(args, dict):
+                args = {}
+
+            # 🔧 FIX workout args
+            if tool == "workout_generator":
+                args.setdefault("focus", "general")
+                args.setdefault("intensity", "medium")
+
+            valid_steps.append({
+                "tool": tool,
+                "args": args
+            })
+
+            seen_tools.add(tool)
 
         return valid_steps
 
     # ---------------- MAIN PLANNER ---------------- #
 
     def create_plan(self, user_input, context):
+
+        user_input_lower = user_input.lower().strip()
+
+        # ==============================
+        # 🚨 HARDCODED SAFETY RULES FIRST
+        # ==============================
+
+        # 🩹 Injury / Pain → recovery (TOP PRIORITY)
+        if any(word in user_input_lower for word in ["pain", "injury", "hurt", "sore"]):
+            return [{"tool": "recovery_advisor"}]
+
+        # 💬 Casual → nudge
+        if any(word in user_input_lower for word in ["bhai", "hello", "hi", "kya", "hey"]):
+            return [{"tool": "nudge_generator"}]
+        
+        words = user_input_lower.split()
+
+        # 🤯 RANDOM INPUT DETECTION
+        if (
+            len(user_input_lower) < 5 or
+            len(words) == 1 and len(words[0]) < 6
+        ):
+            return [{"tool": "nudge_generator"}]
+        # ==============================
+        # 🤖 LLM PLANNING
+        # ==============================
 
         prompt = f"""
 You are an AI planner.
@@ -80,38 +125,25 @@ Available Tools:
 - insight_generator
 - nudge_generator
 
-Task:
-Break the request into steps using tools.
+STRICT RULES:
 
-STRICT RULES (VERY IMPORTANT):
+1. Workout → ONLY workout_generator
+2. Diet → ONLY diet_generator
+3. Pain/Injury → ONLY recovery_advisor
+4. Improve/analyze → insight + workout + diet
+5. Casual → nudge_generator
 
-1. If user asks for workout:
-   → ONLY use workout_generator
+If user asks for progress:
+- ONLY use progress_tracker
+- DO NOT add any other tool
 
-2. ALWAYS extract parameters from input:
-   - chest, legs, back → focus
-   - light, easy → intensity = low
-   - heavy, intense → intensity = high
-
-3. If workout_generator is used:
-   → YOU MUST include "args"
-   → NEVER leave args empty
-
-4. If user asks for diet:
-   → ONLY use diet_generator
-
-5. If user says improve / analyze:
-   → use insight + workout + diet
-
-6. If user says sore / pain:
-   → use recovery_advisor
-
-7. DO NOT include unnecessary tools
+IMPORTANT:
+- Return ONLY JSON array
+- NO explanation
+- NO duplicate tools
+- Always include args for workout_generator
 
 Example:
-User: "light chest workout"
-
-Output:
 [
   {{
     "tool": "workout_generator",
@@ -121,8 +153,6 @@ Output:
     }}
   }}
 ]
-
-Return ONLY JSON array.
 """
 
         try:
@@ -135,28 +165,14 @@ Return ONLY JSON array.
 
             plan = self.safe_parse(output)
 
-            # ✅ KEEP ARGS (FIXED)
             plan = self.validate_plan(plan)
 
-            user_input_lower = user_input.lower()
+            # ==============================
+            # 🚨 STRONG FALLBACK (FINAL GUARD)
+            # ==============================
 
-            casual_keywords = ["bhai","kuch","bata","hello","hi","kya"]
-
-            if any(word in user_input_lower for word in casual_keywords):
-                return [{"tool": "nudge_generator"}]
-
-            # 🚨 FALLBACK (never empty)
             if not plan:
-                user_input_lower = user_input.lower()
-
-                if "improve" in user_input_lower or "better" in user_input_lower:
-                    return [
-                        {"tool": "insight_generator"},
-                        {"tool": "workout_generator"},
-                        {"tool": "diet_generator"},
-                    ]
-
-                elif "diet" in user_input_lower or "eat" in user_input_lower:
+                if "diet" in user_input_lower:
                     return [{"tool": "diet_generator"}]
 
                 elif "workout" in user_input_lower:
@@ -168,9 +184,6 @@ Return ONLY JSON array.
                 elif "progress" in user_input_lower:
                     return [{"tool": "progress_tracker"}]
 
-                elif "sore" in user_input_lower or "pain" in user_input_lower:
-                    return [{"tool": "recovery_advisor"}]
-
                 else:
                     return [{"tool": "nudge_generator"}]
 
@@ -178,5 +191,4 @@ Return ONLY JSON array.
 
         except Exception as e:
             print("❌ PLANNER ERROR:", str(e))
-
             return [{"tool": "nudge_generator"}]
